@@ -42,3 +42,72 @@ if __name__ == '__main__':
     if gpu_id >= 0:
         model.to_gpu(gpu_id)
     
+    from chainer import optimizers
+    optimizer = optimizers.MomentumSGD(lr=0.01, momentum=0.9)
+    optimizer.setup(model)
+
+    # train loop
+    import numpy as np
+    from chainer.dataset import concat_examples
+    from chainer.backends.cuda import to_cpu
+    
+    max_epoch = 10
+    while train_iter.epoch < max_epoch:
+        train_batch = train_iter.next()
+        image_train, target_train = concat_examples(train_batch, gpu_id)
+
+        prediction_train = model(image_train)
+        loss = F.softmax_cross_entropy(prediction_train, target_train)
+
+        model.cleargrads()
+        loss.backward()
+
+        optimizer.update()
+
+        if train_iter.is_new_epoch:
+            print('epoch:{:02d} train_loss{:04f}'.format(
+                train_iter.epoch, float(to_cpu(loss.data))), end='')
+            
+            test_losses = []
+            test_accuracies = []
+            while True:
+                test_batch = test_iter.next()
+                image_test, target_test = concat_examples(test_batch, gpu_id)
+                prediction_test = model(image_test)
+
+                loss_test = F.softmax_cross_entropy(prediction_test, target_test)
+                test_losses.append(to_cpu(loss_test.data))
+
+                accuracy = F.accuracy(prediction_test, target_test)
+                accuracy.to_cpu()
+                test_accuracies.append(accuracy.data)
+
+                if test_iter.is_new_epoch:
+                    test_iter.epoch = 0
+                    test_iter.current_position = 0
+                    test_iter.is_new_epoch = False
+                    test_iter._pushed_position = None
+                    break
+
+            print('val_loss:{:.04f} val_accuracy:{:.04f}'.format(
+                np.mean(test_losses), np.mean(test_accuracies)))
+    serializers.save_npz('my_mnist.model', model)
+
+    # use phase
+    import matplotlib.pyplot as plt
+    model = MyNetwork()
+    serializers.load_npz('my_mnist.model', model)
+
+    x, t = test[0]
+    plt.imshow(x.reshape(28, 28), cmap='gray')
+    plt.savefig('7.png')
+    print('label:', t)
+
+    print(x.shape, end=' -> ')
+    x = x[None, ...]
+    print(x.shape)
+
+    y = model(x)
+    y = y.data
+    pred_label = y.argmax(axis=1)
+    print('predicted label:', pred_label[0])
