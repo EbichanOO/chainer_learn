@@ -10,6 +10,13 @@ import chainer.links as L
 from chainer import training
 from chainer.training import extensions as Ex
 
+def sequence_embed(embed, xs):
+    x_len = [len(x) for x in xs]
+    x_section = np.cumsum(x_len[:-1])
+    ex = embed(F.concat(xs, axis=0))
+    exs = F.split_axis(ex, x_section, 0)
+    return exs
+
 class Seq2seq(chainer, Chain):
     def __init__(self, n_layers, n_source_vocab, n_target_vocab, n_units):
         super(Seq2seq, self).__init__()
