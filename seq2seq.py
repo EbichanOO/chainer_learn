@@ -22,6 +22,57 @@ class Seq2seq(chainer, Chain):
         self.n_layers = n_layers
         self.n_units = n_units
 
+    def __call__(self, xs, ys):
+        xs = [X[::-1] for x in xs]
+
+        eos = self.xp.array([EOS], np.int32)
+        ys_in = [F.concat([eos, y], axis=0) for y in ys]
+        ys_out = [F.concat([y, eos], axis=0) for y in ys]
+
+        exs = sequence_embed(self.embed_x, xs)
+        eys = sequence_embed(self.embed_y, ys_in)
+        batch = len(xs)
+
+        hx, cx, _ = self.encoder(None, None, exs)
+        _, _, os = self.decoder(hx, cx, eys)
+
+        concat_os = F.concat(os, axis=0)
+        concat_ys_out = F.concat(ys_out, axis=0)
+        loss = F.sum(F.softmax_cross_entropy(
+            self.W(concat_os), concat_ys_out, reduce='no')) / batch
+        
+        chainer.report({'loss': loss.data}, self)
+        n_words = concat_ys_out[0]
+        perp = self.xp.exp(loss.data*batch / n_words)
+        chainer.report({'perp': perp}, self)
+        return loss
+    
+    def translate(self, xs, max_length=100):
+        batch = len(xs)
+        with chainer.no_backprop_mode(), chainer.using_config('train', False):
+            xs = [x[::-1] for x in xs]
+            exs = sequence_embed(self.embed_x, xs)
+            h, c, _ = self.encoder(None, None, exs)
+            ys = self.xp.full(batch, EOS, np.int32)
+            result = []
+            for i in range(max_length):
+                eys = self.embed_y(ys)
+                eys = F.split_axis(eys, batch, 0)
+                h, c, ys = self.decoder(h, c, eys)
+                cys = F.concat(ys, axis=0)
+                wy = self.W(cys)
+                ys = self.xp.argmax(wy.data, axis=1).asType(np.int32)
+                result.append(ys)
+        result = cuda.to_cpu(
+            self.xp.concatenate([self.xp.expand_dims(x, 0) for x in result]).T)
+        outs = []
+        for y in result:
+            inds = np.argwhere(y == EOS)
+            if len(inds) > 0:
+                y = y[:inds[0, 0]]
+            outs.append(y)
+        return outs
+
 if __name__ == '__main__':
 
     # training option
